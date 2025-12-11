@@ -21,7 +21,7 @@
 static uint32_t duration_on_sec = 30;
 static uint32_t duration_off_sec = 60;
 static bool zigbee_device_connected = false;
-static uint16_t target_short_addr = 0xFFFF; // Indirizzo del Sonoff
+static uint16_t target_short_addr = 0xFFFF;
 static uint8_t  target_endpoint = 0;
 
 // --- ZIGBEE DEFINITIONS ---
@@ -30,8 +30,6 @@ static uint8_t  target_endpoint = 0;
 
 // --- BLE VARIABLES ---
 static uint8_t adv_service_uuid128[32] = {
-    /* LSB <--------------------------------------------------------------------------------> MSB */
-    //first uuid, 16bit, [12],[13] is the value
     0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00,
 };
 
@@ -64,8 +62,7 @@ static esp_ble_adv_params_t adv_params = {
 void presepe_logic_task(void *pvParameters) {
     bool state_on = false;
 
-    // Definizioni comandi ZCL On/Off standard
-    // Solitamente sono in esp_zigbee_zcl_on_off.h, ma li definiamo qui per sicurezza
+    // Definizioni comandi ZCL On/Off
     const uint8_t CMD_ID_OFF = 0x00;
     const uint8_t CMD_ID_ON  = 0x01;
 
@@ -79,32 +76,23 @@ void presepe_logic_task(void *pvParameters) {
         uint32_t current_wait = state_on ? duration_on_sec : duration_off_sec;
         ESP_LOGI(TAG, "Stato attuale: %s per %lu secondi", state_on ? "ACCESO" : "SPENTO", current_wait);
 
-        // Preparazione del comando Zigbee
         esp_zb_zcl_on_off_cmd_t cmd_req;
-
-        // È buona pratica pulire la memoria della struct
         memset(&cmd_req, 0, sizeof(esp_zb_zcl_on_off_cmd_t));
 
-        // Impostazione indirizzi e endpoint
         cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
         cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
         cmd_req.zcl_basic_cmd.dst_endpoint = target_endpoint;
         cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = target_short_addr;
 
-        // Impostazione del comando specifico (ON o OFF)
         if (state_on) {
-            // Se siamo accesi, ora dobbiamo spegnere
             cmd_req.on_off_cmd_id = CMD_ID_OFF;
         } else {
-            // Se siamo spenti, ora dobbiamo accendere
             cmd_req.on_off_cmd_id = CMD_ID_ON;
         }
 
-        // Invio del comando (Funzione Unica)
         ESP_LOGI(TAG, "Invio comando Zigbee: %s", state_on ? "OFF" : "ON");
         esp_zb_zcl_on_off_cmd_req(&cmd_req);
 
-        // Inverti stato e attendi
         state_on = !state_on;
         vTaskDelay(pdMS_TO_TICKS(current_wait * 1000));
     }
@@ -116,31 +104,30 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         case ESP_GATTS_REG_EVT:
             esp_ble_gap_set_device_name("PRESEPE_CONTROLLER");
             esp_ble_gap_config_adv_data(&adv_data);
+            // CORREZIONE QUI: esp_ble_gatts_create_service
             esp_ble_gatts_create_service(gatts_if, &param->reg.app_id, 40);
             break;
         case ESP_GATTS_CREATE_EVT:
             ESP_LOGI(TAG, "Servizio creato, aggiungo characteristic");
             esp_bt_uuid_t uuid_srv = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = SERVICE_UUID } };
-            esp_gatts_start_service(param->create.service_handle);
+            // CORREZIONE QUI: esp_ble_gatts_start_service
+            esp_ble_gatts_start_service(param->create.service_handle);
 
             esp_bt_uuid_t uuid_on = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = CHAR_ON_UUID } };
-            esp_gatts_add_char(param->create.service_handle, &uuid_on, ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
+            // CORREZIONE QUI: esp_ble_gatts_add_char
+            esp_ble_gatts_add_char(param->create.service_handle, &uuid_on, ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
                                ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ, NULL, NULL);
 
             esp_bt_uuid_t uuid_off = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = CHAR_OFF_UUID } };
-            esp_gatts_add_char(param->create.service_handle, &uuid_off, ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
+            // CORREZIONE QUI: esp_ble_gatts_add_char
+            esp_ble_gatts_add_char(param->create.service_handle, &uuid_off, ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
                                ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ, NULL, NULL);
             break;
         case ESP_GATTS_WRITE_EVT:
-            if (param->write.len == 4) { // Ci aspettiamo un uint32 (4 bytes)
+            if (param->write.len == 4) {
                 uint32_t val = *((uint32_t*)param->write.value);
-                // Determina se è ON o OFF char basandosi sull'handle (semplificato qui)
-                // In un codice prod dovresti mappare gli handle corretti.
-                // Assumiamo che la prima write sia ON per semplicità o loggiamo:
                 ESP_LOGI(TAG, "Ricevuto valore via BLE: %lu", val);
-                // Logica semplificata: se il valore è < 50 probabilmente è ON time, se > 50 OFF time (esempio grezzo)
-                // Meglio: usa gli handle salvati dalla add_char. Qui aggiorno entrambi per test.
-                // Per un codice robusto servirebbe salvare gli handle.
+                // Logica dimostrativa: aggiorna variabile globale
                 duration_on_sec = val;
                 ESP_LOGI(TAG, "Nuova durata impostata: %lu", val);
             }
@@ -169,15 +156,15 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
     case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case ESP_ZB_BDB_SIGNAL_STEERING:
         if (err_status == ESP_OK) {
-            ESP_LOGI(TAG, "Rete Formata/Avviata. Permetto Joining...");
+            ESP_LOGI(TAG, "Rete Avviata. Permetto Joining...");
             esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
         }
         break;
     case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE: {
         esp_zb_zdo_signal_device_annce_params_t *dev_annce_params = (esp_zb_zdo_signal_device_annce_params_t *)esp_zb_app_signal_get_params(p_sg_p);
-        ESP_LOGI(TAG, "Nuovo dispositivo rilevato! Address: 0x%x", dev_annce_params->device_short_addr);
+        ESP_LOGI(TAG, "Dispositivo Rilevato! Address: 0x%x", dev_annce_params->device_short_addr);
         target_short_addr = dev_annce_params->device_short_addr;
-        target_endpoint = 1; // I Sonoff di solito usano endpoint 1
+        target_endpoint = 1;
         zigbee_device_connected = true;
         break;
     }
@@ -188,14 +175,40 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
 }
 
 static void esp_zb_task(void *pvParameters) {
-    esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZC_CONFIG();
+    // 1. Configurazione Iniziale Zigbee (Sostituisce ESP_ZB_ZC_CONFIG)
+    esp_zb_cfg_t zb_nwk_cfg = {
+        .esp_zb_role = ESP_ZB_DEVICE_TYPE_COORDINATOR,
+        .install_code_policy = false,
+        .nwk_cfg.zc_cfg = {
+            .max_children = 32,
+        },
+    };
     esp_zb_init(&zb_nwk_cfg);
 
-    // Configura endpoint base per il Coordinator
-    esp_zb_on_off_switch_cfg_t switch_cfg = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
-    esp_zb_ep_list_t *esp_zb_on_off_switch_ep = esp_zb_on_off_switch_ep_create(HA_ONOFF_SWITCH_ENDPOINT, &switch_cfg);
-    esp_zb_device_register(esp_zb_on_off_switch_ep);
+    // 2. Creazione "Manuale" dell'endpoint (Sostituisce le macro mancanti)
+    // Creiamo una lista di cluster
+    esp_zb_cluster_list_t *cluster_list = esp_zb_cluster_list_create();
 
+    // Aggiungi cluster "Basic" e "Identify" (Server) necessari per farsi riconoscere
+    esp_zb_attribute_list_t *basic_attr = esp_zb_basic_cluster_create(NULL);
+    esp_zb_cluster_list_add_basic_cluster(cluster_list, basic_attr, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    esp_zb_attribute_list_t *identify_attr = esp_zb_identify_cluster_create(NULL);
+    esp_zb_cluster_list_add_identify_cluster(cluster_list, identify_attr, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    // Aggiungi cluster "On/Off" in modalità CLIENT (per poter comandare gli altri)
+    // Nota: per il client non servono attributi specifici in inizializzazione, passiamo NULL o creiamo vuoto
+    esp_zb_cluster_list_add_on_off_cluster(cluster_list, esp_zb_on_off_cluster_create(NULL), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
+    // 3. Creazione Endpoint List
+    esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
+    // Aggiungi l'endpoint 1 con i cluster definiti sopra
+    esp_zb_ep_list_add_ep(ep_list, cluster_list, HA_ONOFF_SWITCH_ENDPOINT, ESP_ZB_AF_HA_PROFILE_ID, ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID);
+
+    // 4. Registrazione Device
+    esp_zb_device_register(ep_list);
+
+    // 5. Registrazione Handler e Avvio
     esp_zb_core_action_handler_register(esp_zb_app_signal_handler);
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
 
