@@ -34,11 +34,12 @@ static uint8_t  target_endpoint = 0;
 #define ESP_ZB_PRIMARY_CHANNEL_MASK ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK
 
 // --- BLE 5.0 EXTENDED ADVERTISING CONFIG ---
-static uint8_t ext_adv_handle = 0;
+// Definiamo l'handle manualmente (indice 0)
+#define EXT_ADV_HANDLE_MAIN 0
 
 // Parametri Extended Advertising
 esp_ble_gap_ext_adv_params_t ext_adv_params_legacy = {
-    .type = ESP_BLE_GAP_SET_EXT_ADV_PROP_CONNECTABLE | ESP_BLE_GAP_SET_EXT_ADV_PROP_SCANNABLE, // Connectable legacy (retrocompatibile)
+    .type = ESP_BLE_GAP_SET_EXT_ADV_PROP_CONNECTABLE | ESP_BLE_GAP_SET_EXT_ADV_PROP_SCANNABLE,
     .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
     .channel_map = ADV_CHNL_ALL,
     .filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
@@ -49,15 +50,20 @@ esp_ble_gap_ext_adv_params_t ext_adv_params_legacy = {
     .scan_req_notif = false,
 };
 
-// Raw Advertising Data (Flags + Name + Service UUID)
-// [Len, Type, Value...]
+// Raw Advertising Data
 static uint8_t raw_adv_data[] = {
-    // Flags: General Discoverable, BR/EDR Not Supported
     0x02, 0x01, 0x06,
-    // Complete Local Name: "PRESEPE"
     0x08, 0x09, 'P', 'R', 'E', 'S', 'E', 'P', 'E',
-    // Complete List of 16-bit Service UUIDs (0x00FF)
     0x03, 0x03, 0xFF, 0x00
+};
+
+// Struttura necessaria per l'avvio dell'advertising (NUOVA API)
+static esp_ble_gap_ext_adv_t ext_adv_start_param[] = {
+    {
+        .instance = EXT_ADV_HANDLE_MAIN,
+        .duration = 0,   // 0 = per sempre
+        .max_events = 0,
+    }
 };
 
 // --- LOGICA DI CONTROLLO (TASK) ---
@@ -96,7 +102,7 @@ void presepe_logic_task(void *pvParameters) {
 static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     switch (event) {
         case ESP_GATTS_REG_EVT:
-            // Configurazione BLE 5.0 Advertising Params
+            // Configurazione BLE 5.0 Params
             esp_ble_gap_ext_adv_set_params(EXT_ADV_HANDLE_MAIN, &ext_adv_params_legacy);
             esp_ble_gatts_create_service(gatts_if, &param->reg.app_id, 40);
             break;
@@ -117,7 +123,6 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             if (param->write.len == 4) {
                 uint32_t val = *((uint32_t*)param->write.value);
                 ESP_LOGI(TAG, "BLE Write: %lu", val);
-                // Nota: In un caso reale dovresti controllare param->write.handle per sapere QUALE char è stata scritta
                 duration_on_sec = val;
             }
             break;
@@ -132,9 +137,8 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
             esp_ble_gap_config_ext_adv_data_raw(EXT_ADV_HANDLE_MAIN, sizeof(raw_adv_data), raw_adv_data);
             break;
         case ESP_GAP_BLE_EXT_ADV_DATA_SET_COMPLETE_EVT:
-            // Dati settati, avviamo l'advertising
-            esp_ble_gap_ext_adv_start(1, &ext_adv_params_legacy);
-            // 1 = numero di set da avviare
+            // Dati settati, avviamo l'advertising passando la struct corretta
+            esp_ble_gap_ext_adv_start(1, ext_adv_start_param);
             ESP_LOGI(TAG, "BLE Extended Advertising avviato");
             break;
         default: break;
@@ -175,7 +179,10 @@ static void esp_zb_task(void *pvParameters) {
     esp_zb_cfg_t zb_nwk_cfg = {
         .esp_zb_role = ESP_ZB_DEVICE_TYPE_COORDINATOR,
         .install_code_policy = false,
-        .nwk_cfg.zc_cfg = { .max_children = 32 },
+        // CORREZIONE 1: zc_cfg -> zczr_cfg (Unificato)
+        .nwk_cfg.zczr_cfg = {
+            .max_children = 32,
+        },
     };
     esp_zb_init(&zb_nwk_cfg);
 
