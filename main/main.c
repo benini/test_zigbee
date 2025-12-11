@@ -9,7 +9,12 @@
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
 #include "esp_bt_main.h"
+
+// Zigbee Includes
 #include "esp_zigbee_core.h"
+// Includiamo header specifici per sicurezza, anche se core dovrebbe bastare
+#include "zcl/esp_zigbee_zcl_common.h"
+#include "zcl/esp_zigbee_zcl_command.h"
 
 // --- CONFIGURAZIONE ---
 #define TAG "PRESEPE_CTRL"
@@ -62,7 +67,7 @@ static esp_ble_adv_params_t adv_params = {
 void presepe_logic_task(void *pvParameters) {
     bool state_on = false;
 
-    // Definizioni comandi ZCL On/Off
+    // Costanti per ON/OFF
     const uint8_t CMD_ID_OFF = 0x00;
     const uint8_t CMD_ID_ON  = 0x01;
 
@@ -90,7 +95,7 @@ void presepe_logic_task(void *pvParameters) {
             cmd_req.on_off_cmd_id = CMD_ID_ON;
         }
 
-        ESP_LOGI(TAG, "Invio comando Zigbee: %s", state_on ? "OFF" : "ON");
+        ESP_LOGI(TAG, "Invio comando Zigbee...");
         esp_zb_zcl_on_off_cmd_req(&cmd_req);
 
         state_on = !state_on;
@@ -104,22 +109,18 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         case ESP_GATTS_REG_EVT:
             esp_ble_gap_set_device_name("PRESEPE_CONTROLLER");
             esp_ble_gap_config_adv_data(&adv_data);
-            // CORREZIONE QUI: esp_ble_gatts_create_service
             esp_ble_gatts_create_service(gatts_if, &param->reg.app_id, 40);
             break;
         case ESP_GATTS_CREATE_EVT:
-            ESP_LOGI(TAG, "Servizio creato, aggiungo characteristic");
+            ESP_LOGI(TAG, "Servizio BLE creato");
             esp_bt_uuid_t uuid_srv = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = SERVICE_UUID } };
-            // CORREZIONE QUI: esp_ble_gatts_start_service
             esp_ble_gatts_start_service(param->create.service_handle);
 
             esp_bt_uuid_t uuid_on = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = CHAR_ON_UUID } };
-            // CORREZIONE QUI: esp_ble_gatts_add_char
             esp_ble_gatts_add_char(param->create.service_handle, &uuid_on, ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
                                ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ, NULL, NULL);
 
             esp_bt_uuid_t uuid_off = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = CHAR_OFF_UUID } };
-            // CORREZIONE QUI: esp_ble_gatts_add_char
             esp_ble_gatts_add_char(param->create.service_handle, &uuid_off, ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
                                ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ, NULL, NULL);
             break;
@@ -127,9 +128,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
             if (param->write.len == 4) {
                 uint32_t val = *((uint32_t*)param->write.value);
                 ESP_LOGI(TAG, "Ricevuto valore via BLE: %lu", val);
-                // Logica dimostrativa: aggiorna variabile globale
                 duration_on_sec = val;
-                ESP_LOGI(TAG, "Nuova durata impostata: %lu", val);
             }
             break;
         default: break;
@@ -175,7 +174,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
 }
 
 static void esp_zb_task(void *pvParameters) {
-    // 1. Configurazione Iniziale Zigbee (Sostituisce ESP_ZB_ZC_CONFIG)
+    // 1. Configurazione Iniziale Zigbee
     esp_zb_cfg_t zb_nwk_cfg = {
         .esp_zb_role = ESP_ZB_DEVICE_TYPE_COORDINATOR,
         .install_code_policy = false,
@@ -185,25 +184,33 @@ static void esp_zb_task(void *pvParameters) {
     };
     esp_zb_init(&zb_nwk_cfg);
 
-    // 2. Creazione "Manuale" dell'endpoint (Sostituisce le macro mancanti)
-    // Creiamo una lista di cluster
-    esp_zb_cluster_list_t *cluster_list = esp_zb_cluster_list_create();
+    // 2. Creazione "Manuale" dell'endpoint
+    // CORREZIONE 1: Uso di esp_zb_zcl_cluster_list_create() invece di esp_zb_cluster_list_create()
+    esp_zb_cluster_list_t *cluster_list = esp_zb_zcl_cluster_list_create();
 
-    // Aggiungi cluster "Basic" e "Identify" (Server) necessari per farsi riconoscere
+    // Aggiungi cluster "Basic" e "Identify" (Server)
     esp_zb_attribute_list_t *basic_attr = esp_zb_basic_cluster_create(NULL);
     esp_zb_cluster_list_add_basic_cluster(cluster_list, basic_attr, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
     esp_zb_attribute_list_t *identify_attr = esp_zb_identify_cluster_create(NULL);
     esp_zb_cluster_list_add_identify_cluster(cluster_list, identify_attr, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
-    // Aggiungi cluster "On/Off" in modalità CLIENT (per poter comandare gli altri)
-    // Nota: per il client non servono attributi specifici in inizializzazione, passiamo NULL o creiamo vuoto
+    // Aggiungi cluster "On/Off" (Client)
     esp_zb_cluster_list_add_on_off_cluster(cluster_list, esp_zb_on_off_cluster_create(NULL), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
+    // CORREZIONE 2: Preparazione della Configurazione Endpoint (Struct)
+    esp_zb_endpoint_config_t endpoint_config = {
+        .endpoint = HA_ONOFF_SWITCH_ENDPOINT,
+        .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
+        .app_device_id = ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID,
+        .app_device_version = 0
+    };
 
     // 3. Creazione Endpoint List
     esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
-    // Aggiungi l'endpoint 1 con i cluster definiti sopra
-    esp_zb_ep_list_add_ep(ep_list, cluster_list, HA_ONOFF_SWITCH_ENDPOINT, ESP_ZB_AF_HA_PROFILE_ID, ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID);
+
+    // CORREZIONE 3: Passaggio della struct invece dei parametri singoli
+    esp_zb_ep_list_add_ep(ep_list, cluster_list, endpoint_config);
 
     // 4. Registrazione Device
     esp_zb_device_register(ep_list);
