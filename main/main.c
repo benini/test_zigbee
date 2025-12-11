@@ -63,7 +63,12 @@ static esp_ble_adv_params_t adv_params = {
 // --- LOGICA DI CONTROLLO (TASK) ---
 void presepe_logic_task(void *pvParameters) {
     bool state_on = false;
-    
+
+    // Definizioni comandi ZCL On/Off standard
+    // Solitamente sono in esp_zigbee_zcl_on_off.h, ma li definiamo qui per sicurezza
+    const uint8_t CMD_ID_OFF = 0x00;
+    const uint8_t CMD_ID_ON  = 0x01;
+
     while(1) {
         if (!zigbee_device_connected) {
             ESP_LOGW(TAG, "In attesa del Sonoff Zigbee...");
@@ -74,19 +79,31 @@ void presepe_logic_task(void *pvParameters) {
         uint32_t current_wait = state_on ? duration_on_sec : duration_off_sec;
         ESP_LOGI(TAG, "Stato attuale: %s per %lu secondi", state_on ? "ACCESO" : "SPENTO", current_wait);
 
-        // Invia comando Zigbee
+        // Preparazione del comando Zigbee
         esp_zb_zcl_on_off_cmd_t cmd_req;
+
+        // È buona pratica pulire la memoria della struct
+        memset(&cmd_req, 0, sizeof(esp_zb_zcl_on_off_cmd_t));
+
+        // Impostazione indirizzi e endpoint
         cmd_req.zcl_basic_cmd.src_endpoint = HA_ONOFF_SWITCH_ENDPOINT;
         cmd_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
         cmd_req.zcl_basic_cmd.dst_endpoint = target_endpoint;
         cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = target_short_addr;
-        
+
+        // Impostazione del comando specifico (ON o OFF)
         if (state_on) {
-            esp_zb_zcl_on_off_cmd_off_req(&cmd_req);
+            // Se siamo accesi, ora dobbiamo spegnere
+            cmd_req.on_off_cmd_id = CMD_ID_OFF;
         } else {
-            esp_zb_zcl_on_off_cmd_on_req(&cmd_req);
+            // Se siamo spenti, ora dobbiamo accendere
+            cmd_req.on_off_cmd_id = CMD_ID_ON;
         }
-        
+
+        // Invio del comando (Funzione Unica)
+        ESP_LOGI(TAG, "Invio comando Zigbee: %s", state_on ? "OFF" : "ON");
+        esp_zb_zcl_on_off_cmd_req(&cmd_req);
+
         // Inverti stato e attendi
         state_on = !state_on;
         vTaskDelay(pdMS_TO_TICKS(current_wait * 1000));
@@ -99,13 +116,13 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
         case ESP_GATTS_REG_EVT:
             esp_ble_gap_set_device_name("PRESEPE_CONTROLLER");
             esp_ble_gap_config_adv_data(&adv_data);
-            esp_ble_gatts_create_service(gatts_if, &param->reg.app_id, 40); 
+            esp_ble_gatts_create_service(gatts_if, &param->reg.app_id, 40);
             break;
         case ESP_GATTS_CREATE_EVT:
             ESP_LOGI(TAG, "Servizio creato, aggiungo characteristic");
             esp_bt_uuid_t uuid_srv = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = SERVICE_UUID } };
             esp_gatts_start_service(param->create.service_handle);
-            
+
             esp_bt_uuid_t uuid_on = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = CHAR_ON_UUID } };
             esp_gatts_add_char(param->create.service_handle, &uuid_on, ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
                                ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ, NULL, NULL);
@@ -124,7 +141,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
                 // Logica semplificata: se il valore è < 50 probabilmente è ON time, se > 50 OFF time (esempio grezzo)
                 // Meglio: usa gli handle salvati dalla add_char. Qui aggiorno entrambi per test.
                 // Per un codice robusto servirebbe salvare gli handle.
-                duration_on_sec = val; 
+                duration_on_sec = val;
                 ESP_LOGI(TAG, "Nuova durata impostata: %lu", val);
             }
             break;
@@ -173,15 +190,15 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
 static void esp_zb_task(void *pvParameters) {
     esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZC_CONFIG();
     esp_zb_init(&zb_nwk_cfg);
-    
+
     // Configura endpoint base per il Coordinator
     esp_zb_on_off_switch_cfg_t switch_cfg = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
     esp_zb_ep_list_t *esp_zb_on_off_switch_ep = esp_zb_on_off_switch_ep_create(HA_ONOFF_SWITCH_ENDPOINT, &switch_cfg);
     esp_zb_device_register(esp_zb_on_off_switch_ep);
-    
+
     esp_zb_core_action_handler_register(esp_zb_app_signal_handler);
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
-    
+
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_main_loop_iteration();
 }
@@ -193,7 +210,7 @@ void app_main(void) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
-    
+
     // 2. Init BLE
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
@@ -201,7 +218,7 @@ void app_main(void) {
     esp_bt_controller_enable(ESP_BT_MODE_BLE);
     esp_bluedroid_init();
     esp_bluedroid_enable();
-    
+
     esp_ble_gatts_register_callback(gatts_profile_event_handler);
     esp_ble_gap_register_callback(gap_event_handler);
     esp_ble_gatts_app_register(0);
