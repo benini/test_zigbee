@@ -178,7 +178,7 @@ static void esp_zb_task(void *pvParameters) {
     esp_zb_cfg_t zb_nwk_cfg = {
         .esp_zb_role = ESP_ZB_DEVICE_TYPE_COORDINATOR,
         .install_code_policy = false,
-        .nwk_cfg.zc_cfg = {
+        .nwk_cfg.zczr_cfg = {
             .max_children = 32,
         },
     };
