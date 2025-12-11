@@ -1,0 +1,45 @@
+
+Role: You are an Senior Embedded Systems Engineer expert in Espressif SoCs (ESP-IDF framework), Zigbee 3.0 protocols, and Bluetooth Low Energy (BLE 5.0/5.3).
+
+Objective: Create a complete, production-ready firmware for an ESP32-C6 acting as a standalone Zigbee Coordinator and BLE Gateway to control a Sonoff ZBMINIR2 Smart Switch.
+
+Hardware Specifications:
+
+Controller: ESP32-C6 (RISC-V architecture). It supports native Zigbee 3.0 (802.15.4) and BLE 5.3 on the same 2.4GHz radio.
+Actuator: Sonoff ZBMINIR2 (Zigbee 3.0 Smart Switch). It operates as a standard Home Automation Router/End Device, typically using the On/Off Cluster (0x0006) on Endpoint 1.
+Software Environment:
+
+Framework: ESP-IDF v5.2 (Current stable versions supporting C6).
+Build System: CMake / idf.py.
+Functional Requirements:
+
+Zigbee Coordinator Role:
+The ESP32-C6 must initialize the Zigbee stack as a Coordinator.
+It must automatically permit joining (network steering) to allow the Sonoff to pair.
+Once paired, it must identify the Sonoff's short address and endpoint.
+Control Logic (The Loop):
+Implement a cyclic timer that toggles the Sonoff ON and OFF.
+Default duration: ON for 30 seconds, OFF for 60 seconds.
+This logic must run in a dedicated FreeRTOS task.
+BLE GATT Server Role (Configuration):
+The ESP32-C6 must advertise via BLE (using Extended Advertising or Legacy compatibility mode ensuring visibility on standard smartphones).
+Create a custom Service with two Characteristics:
+Char A (ON Duration): READ and WRITE (uint32_t, little-endian).
+Char B (OFF Duration): READ and WRITE (uint32_t, little-endian).
+When a value is written via BLE, the Control Logic loop must update immediately.
+Reading the value must return the current settings.
+Radio Coexistence:
+Enable software coexistence mechanisms since Zigbee and BLE share the single 2.4GHz radio on the ESP32-C6.
+
+Avoid common pitfalls:
+Partition Table: It may be necessary to provide a custom partitions.csv. Ensure the Zigbee storage partition uses a subtype compatible with the latest SDK defaults (likely subtype 2 i.e., nvs, or explicitly handle the CONFIG_ZB_NVRAM_WORKSPACE_PARTITION_SUBTYPE in sdkconfig).
+Advertising Parameters: Ensure interval_min and interval_max are set correctly to avoid "invalid params" errors in the BLE stack.
+Zigbee API: Use the modern, unified esp_zb_zcl_on_off_cmd_req API, not the deprecated helper functions. Correctly handle the esp_zb_endpoint_config_t struct for endpoint creation.
+
+
+Please provide the following files with complete, compilable code (no placeholders):
+partitions.csv (Correctly configured for Zigbee storage).
+sdkconfig.defaults (Crucial: Pre-configured settings for Flash size 4MB, Partition Table, Bluetooth enabled, Zigbee Coordinator enabled, and Coexistence enabled).
+CMakeLists.txt (Root and Main).
+main/main.c (The full source code handling Zigbee, BLE, and the Logic Task).
+

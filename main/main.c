@@ -23,8 +23,11 @@
 #define CHAR_OFF_UUID          0xFF02
 
 // --- VARIABILI GLOBALI ---
+// Tempi di default (in secondi)
 static uint32_t duration_on_sec = 30;
 static uint32_t duration_off_sec = 60;
+
+// Stato Zigbee
 static bool zigbee_device_connected = false;
 static uint16_t target_short_addr = 0xFFFF;
 static uint8_t  target_endpoint = 0;
@@ -34,21 +37,27 @@ static uint8_t  target_endpoint = 0;
 #define ESP_ZB_PRIMARY_CHANNEL_MASK ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK
 
 // --- BLE 5.0 EXTENDED ADVERTISING CONFIG ---
-// Definiamo l'handle manualmente (indice 0)
 #define EXT_ADV_HANDLE_MAIN 0
 
-// Parametri Extended Advertising
+// Parametri Extended Advertising (LEGACY MODE)
+// CRUCIALE: interval_min e interval_max SONO OBBLIGATORI
 esp_ble_gap_ext_adv_params_t ext_adv_params_legacy = {
     .type = ESP_BLE_GAP_SET_EXT_ADV_PROP_CONNECTABLE |
             ESP_BLE_GAP_SET_EXT_ADV_PROP_SCANNABLE |
             ESP_BLE_GAP_SET_EXT_ADV_PROP_LEGACY,
+
     .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
     .channel_map = ADV_CHNL_ALL,
     .filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
     .primary_phy = ESP_BLE_GAP_PHY_1M,
-    .max_skip = 0,
     .secondary_phy = ESP_BLE_GAP_PHY_1M,
+
+    // CORREZIONE DELL'ERRORE "INVALID PARAMS":
+    .interval_min = 0x20, // 20 ms (minimo permesso)
+    .interval_max = 0x40, // 40 ms
+
     .sid = 0,
+    .max_skip = 0,
     .scan_req_notif = false,
 };
 
@@ -59,11 +68,11 @@ static uint8_t raw_adv_data[] = {
     0x03, 0x03, 0xFF, 0x00
 };
 
-// Struttura necessaria per l'avvio dell'advertising (NUOVA API)
+// Configurazione avvio
 static esp_ble_gap_ext_adv_t ext_adv_start_param[] = {
     {
         .instance = EXT_ADV_HANDLE_MAIN,
-        .duration = 0,   // 0 = per sempre
+        .duration = 0,   // 0 = infinito
         .max_events = 0,
     }
 };
@@ -75,6 +84,7 @@ void presepe_logic_task(void *pvParameters) {
     const uint8_t CMD_ID_ON  = 0x01;
 
     while(1) {
+        // Se non c'è il Sonoff, aspetta
         if (!zigbee_device_connected) {
             ESP_LOGW(TAG, "In attesa del Sonoff Zigbee...");
             vTaskDelay(pdMS_TO_TICKS(5000));
@@ -82,8 +92,9 @@ void presepe_logic_task(void *pvParameters) {
         }
 
         uint32_t current_wait = state_on ? duration_on_sec : duration_off_sec;
-        ESP_LOGI(TAG, "Stato: %s (%lu s)", state_on ? "ACCESO" : "SPENTO", current_wait);
+        ESP_LOGI(TAG, "Stato: %s (Attesa: %lu s)", state_on ? "ACCESO" : "SPENTO", current_wait);
 
+        // Prepara comando
         esp_zb_zcl_on_off_cmd_t cmd_req;
         memset(&cmd_req, 0, sizeof(esp_zb_zcl_on_off_cmd_t));
 
@@ -93,8 +104,10 @@ void presepe_logic_task(void *pvParameters) {
         cmd_req.zcl_basic_cmd.dst_addr_u.addr_short = target_short_addr;
         cmd_req.on_off_cmd_id = state_on ? CMD_ID_OFF : CMD_ID_ON;
 
+        // Invia
         esp_zb_zcl_on_off_cmd_req(&cmd_req);
 
+        // Toggle e attesa
         state_on = !state_on;
         vTaskDelay(pdMS_TO_TICKS(current_wait * 1000));
     }
@@ -104,27 +117,39 @@ void presepe_logic_task(void *pvParameters) {
 static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     switch (event) {
         case ESP_GATTS_REG_EVT:
-            // Configurazione BLE 5.0 Params
+            // 1. Imposta i parametri
             esp_ble_gap_ext_adv_set_params(EXT_ADV_HANDLE_MAIN, &ext_adv_params_legacy);
+            // 2. Crea il servizio
             esp_ble_gatts_create_service(gatts_if, &param->reg.app_id, 40);
             break;
+
         case ESP_GATTS_CREATE_EVT:
             ESP_LOGI(TAG, "Servizio BLE creato");
-            esp_bt_uuid_t uuid_srv = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = SERVICE_UUID } };
+            // Avvia servizio
             esp_ble_gatts_start_service(param->create.service_handle);
 
+            // Aggiungi char ON
             esp_bt_uuid_t uuid_on = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = CHAR_ON_UUID } };
-            esp_ble_gatts_add_char(param->create.service_handle, &uuid_on, ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
-                               ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ, NULL, NULL);
+            esp_ble_gatts_add_char(param->create.service_handle, &uuid_on,
+                                   ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
+                                   ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ,
+                                   NULL, NULL);
 
+            // Aggiungi char OFF
             esp_bt_uuid_t uuid_off = { .len = ESP_UUID_LEN_16, .uuid = { .uuid16 = CHAR_OFF_UUID } };
-            esp_ble_gatts_add_char(param->create.service_handle, &uuid_off, ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
-                               ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ, NULL, NULL);
+            esp_ble_gatts_add_char(param->create.service_handle, &uuid_off,
+                                   ESP_GATT_PERM_WRITE | ESP_GATT_PERM_READ,
+                                   ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_READ,
+                                   NULL, NULL);
             break;
+
         case ESP_GATTS_WRITE_EVT:
             if (param->write.len == 4) {
                 uint32_t val = *((uint32_t*)param->write.value);
-                ESP_LOGI(TAG, "BLE Write: %lu", val);
+                ESP_LOGI(TAG, "Ricevuto via BLE: %lu", val);
+                // QUI LA LOGICA SEMPLIFICATA:
+                // Se scriviamo sulla prima char è ON, se è sulla seconda è OFF.
+                // Per ora aggiorniamo ON per testare la comunicazione.
                 duration_on_sec = val;
             }
             break;
@@ -135,13 +160,13 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
     switch (event) {
         case ESP_GAP_BLE_EXT_ADV_SET_PARAMS_COMPLETE_EVT:
-            // Params settati, ora configuriamo i dati raw
+             // Parametri ok -> Imposta i dati raw (nome, uuid)
             esp_ble_gap_config_ext_adv_data_raw(EXT_ADV_HANDLE_MAIN, sizeof(raw_adv_data), raw_adv_data);
             break;
         case ESP_GAP_BLE_EXT_ADV_DATA_SET_COMPLETE_EVT:
-            // Dati settati, avviamo l'advertising passando la struct corretta
+            // Dati ok -> Avvia advertising
             esp_ble_gap_ext_adv_start(1, ext_adv_start_param);
-            ESP_LOGI(TAG, "BLE Extended Advertising avviato");
+            ESP_LOGI(TAG, "BLE Extended Advertising avviato correttamente");
             break;
         default: break;
     }
@@ -181,10 +206,7 @@ static void esp_zb_task(void *pvParameters) {
     esp_zb_cfg_t zb_nwk_cfg = {
         .esp_zb_role = ESP_ZB_DEVICE_TYPE_COORDINATOR,
         .install_code_policy = false,
-        // CORREZIONE 1: zc_cfg -> zczr_cfg (Unificato)
-        .nwk_cfg.zczr_cfg = {
-            .max_children = 32,
-        },
+        .nwk_cfg.zczr_cfg = { .max_children = 32 },
     };
     esp_zb_init(&zb_nwk_cfg);
 

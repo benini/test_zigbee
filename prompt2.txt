@@ -1,0 +1,46 @@
+Act as a Senior Embedded Systems Engineer specializing in the Espressif ESP-IDF framework (v5.1+).
+
+I need a complete, production-ready firmware project for an ESP32-C6.
+The goal is to create a standalone device that controls a Zigbee 3.0 smart switch while being configurable via Bluetooth Low Energy (BLE).
+
+**Hardware Setup:**
+1. **Controller:** ESP32-C6 (RISC-V). It must act as a Zigbee Coordinator and a BLE Peripheral simultaneously.
+2. **Target Device:** Sonoff ZBMINIR2 (Zigbee 3.0 Smart Switch, mains powered).
+
+**Functional Requirements:**
+
+1. **Zigbee Coordinator (Control Logic):**
+   - Initialize the Zigbee stack as a Coordinator.
+   - Automatically open the network for joining (Network Steering) so I can pair the Sonoff ZBMINIR2.
+   - Once paired, the code must automatically detect the device (standard On/Off Cluster 0x0006).
+   - Implement a logic loop that toggles the Sonoff ON and OFF based on configurable timers.
+   - Default values: 30 seconds ON, 60 seconds OFF.
+
+2. **BLE GATT Server (Configuration):**
+   - The ESP32-C6 must advertise a custom service.
+   - Implement two Characteristics (uint32_t, little-endian):
+     - **Characteristic 1 (ON Duration):** Read & Write.
+     - **Characteristic 2 (OFF Duration):** Read & Write.
+   - The user must be able to read current values and write new values from a smartphone app (like nRF Connect).
+   - Writing a new value must immediately update the active timer logic.
+
+3. **System & Coexistence:**
+   - Enable Software Coexistence (Zigbee and BLE share the same radio).
+   - Use NVS to store the timer values so they persist after a reboot.
+
+**Critical Technical Constraints (Do not fail on these):**
+- **Partitions:** If necessary provide  a valid `partitions.csv`. Specifically, ensure the Zigbee storage partition (`zb_storage`) is defined correctly (subtype `0x80` or `nvs`/`2`) and matches the configuration in `sdkconfig`.
+- **SDK Configuration:** Provide a full `sdkconfig.defaults` file. It must include:
+  - Flash size set to 4MB.
+  - Partition table set to Custom (if necessary).
+  - Bluetooth enabled (Bluedroid).
+  - Zigbee enabled (Native).
+- **Zigbee API:** Use the modern ESP-IDF v5.1+ APIs. Do not use deprecated helper macros for endpoint creation. Use `esp_zb_zcl_on_off_cmd_req` with the correct struct configuration for sending commands.
+
+**Output required:**
+Please provide the full content for:
+1. `partitions.csv`
+2. `sdkconfig.defaults`
+3. `CMakeLists.txt` (Project level)
+4. `main/CMakeLists.txt` (Component level)
+5. `main/main.c` (Complete source code)
