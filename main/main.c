@@ -39,7 +39,9 @@ static uint8_t  target_endpoint = 0;
 
 // Parametri Extended Advertising
 esp_ble_gap_ext_adv_params_t ext_adv_params_legacy = {
-    .type = ESP_BLE_GAP_SET_EXT_ADV_PROP_CONNECTABLE | ESP_BLE_GAP_SET_EXT_ADV_PROP_SCANNABLE,
+    .type = ESP_BLE_GAP_SET_EXT_ADV_PROP_CONNECTABLE |
+            ESP_BLE_GAP_SET_EXT_ADV_PROP_SCANNABLE |
+            ESP_BLE_GAP_SET_EXT_ADV_PROP_LEGACY,
     .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
     .channel_map = ADV_CHNL_ALL,
     .filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
