@@ -1,0 +1,33 @@
+Usage Guide
+1. Initial Setup
+
+    Flash the firmware to your ESP32-C6
+    The device will start as a Zigbee Coordinator and automatically form a network
+    The network will open for joining (you'll see "Network open for joining" in logs)
+
+2. Pair the Sonoff ZBMINIR2
+
+    Put your Sonoff ZBMINIR2 in pairing mode (usually by pressing the button 5 times quickly)
+    The ESP32-C6 will automatically detect and pair with the device
+    You'll see "New device joined!" in the logs
+
+3. BLE Configuration (using nRF Connect)
+
+    Open nRF Connect on your smartphone
+    Scan for devices and find "ZB_Switch_Ctrl"
+    Connect to the device
+    Navigate to the custom service (UUID starting with 12345678...)
+    You'll see two characteristics:
+        ON Duration (UUID ending in F1): Read/Write - Current: 30 seconds (0x1E000000)
+        OFF Duration (UUID ending in F2): Read/Write - Current: 60 seconds (0x3C000000)
+
+4. Changing Timer Values
+
+    To write a new value, enter the duration in seconds as a little-endian uint32_t
+    Examples:
+        10 seconds: 0A 00 00 00
+        30 seconds: 1E 00 00 00
+        60 seconds: 3C 00 00 00
+        120 seconds: 78 00 00 00
+    The change takes effect immediately on the next cycle
+

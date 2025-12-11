@@ -1,7 +1,7 @@
-# Name,   Type, SubType, Offset,  Size, Flags
-nvs,      data, nvs,     ,        0x6000,
-otadata,  data, ota,     ,        0x2000,
-phy_init, data, phy,     ,        0x1000,
-zb_storage,data, nvs,    ,        0x10000,
-zb_fct,   data, nvs,     ,        0x1000,
-factory,  app,  factory, ,        2M,
+# ESP-IDF Partition Table for Zigbee Coordinator + BLE (4MB Flash)
+# Name,      Type, SubType,  Offset,   Size,     Flags
+nvs,         data, nvs,      0x9000,   0x6000,
+phy_init,    data, phy,      0xF000,   0x1000,
+factory,     app,  factory,  0x10000,  0x180000,
+zb_storage,  data, 0x80,     0x190000, 0x10000,
+zb_fct,      data, 0x81,     0x1A0000, 0x1000,
