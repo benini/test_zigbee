@@ -39,8 +39,9 @@ The goal is to create a standalone device that controls a Zigbee 3.0 smart switc
 
 **Output required:**
 Please provide the full content for:
-1. `partitions.csv`
+1. `partitions.csv` (if necessary)
 2. `sdkconfig.defaults`
 3. `CMakeLists.txt` (Project level)
 4. `main/CMakeLists.txt` (Component level)
 5. `main/main.c` (Complete source code)
+6. 'idf_component.yml' (if necessary)
