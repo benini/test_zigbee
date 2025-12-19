@@ -23,7 +23,34 @@ static TimerHandle_t s_toggle_timer = NULL;
 static bool s_network_formed = false;
 
 /**
- * @brief Invia comando Toggle a tutti i dispositivi nella rete (broadcast)
+ * @brief Invia comando ON a un dispositivo specifico
+ */
+static void send_on_to_device(uint16_t short_addr)
+{
+    ESP_LOGI(TAG, ">>> Invio ON al dispositivo 0x%04x", short_addr);
+
+    esp_zb_zcl_on_off_cmd_t cmd_req = {
+        .zcl_basic_cmd = {
+            .src_endpoint = COORDINATOR_ENDPOINT,
+            .dst_addr_u = {
+                .addr_short = short_addr,
+            },
+            .dst_endpoint = 1,
+        },
+        .address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
+        .on_off_cmd_id = ESP_ZB_ZCL_CMD_ON_OFF_ON_ID,
+    };
+
+    esp_err_t ret = esp_zb_zcl_on_off_cmd_req(&cmd_req);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Comando ON inviato con successo a 0x%04x", short_addr);
+    } else {
+        ESP_LOGE(TAG, "Errore invio ON: %s", esp_err_to_name(ret));
+    }
+}
+
+/**
+ * @brief Invia comando Toggle a tutti i dispositivi nella rete
  */
 static void send_toggle_to_all(void)
 {
@@ -55,41 +82,6 @@ static void send_toggle_to_all(void)
 }
 
 /**
- * @brief Invia comando ON ad un singolo dispositivo
- *
- * @param short_addr Short address del dispositivo Zigbee
- * @param endpoint   Endpoint remoto che espone l'On/Off cluster (tipicamente 1)
- */
-static void send_on_to_device(uint16_t short_addr, uint8_t endpoint)
-{
-    if (!s_network_formed) {
-        ESP_LOGW(TAG, "Rete non ancora formata, skip ON");
-        return;
-    }
-
-    ESP_LOGI(TAG, ">>> Invio ON a dispositivo 0x%04x (endpoint %d)", short_addr, endpoint);
-
-    esp_zb_zcl_on_off_cmd_t cmd_req = {
-        .zcl_basic_cmd = {
-            .src_endpoint = COORDINATOR_ENDPOINT,
-            .dst_addr_u = {
-                .addr_short = short_addr,
-            },
-            .dst_endpoint = endpoint,
-        },
-        .address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
-        .on_off_cmd_id = ESP_ZB_ZCL_CMD_ON_OFF_ON_ID,   // Comando ON
-    };
-
-    esp_err_t ret = esp_zb_zcl_on_off_cmd_req(&cmd_req);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Comando ON inviato con successo");
-    } else {
-        ESP_LOGE(TAG, "Errore invio ON: %s", esp_err_to_name(ret));
-    }
-}
-
-/**
  * @brief Callback del timer per toggle periodico
  */
 static void toggle_timer_callback(TimerHandle_t xTimer)
@@ -115,6 +107,57 @@ static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask)
 }
 
 /**
+ * @brief Action handler per intercettare report e altri messaggi
+ */
+static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id, 
+                                    const void *message)
+{
+    switch (callback_id) {
+    case ESP_ZB_CORE_REPORT_ATTR_CB_ID: {
+        esp_zb_zcl_report_attr_message_t *report = (esp_zb_zcl_report_attr_message_t *)message;
+        ESP_LOGI(TAG, "[ACTION] Report attributo da 0x%04x, cluster: 0x%04x, attr: 0x%04x",
+                 report->src_address.u.short_addr,
+                 report->cluster,
+                 report->attribute.id);
+        break;
+    }
+    
+    case ESP_ZB_CORE_CMD_DEFAULT_RESP_CB_ID: {
+        ESP_LOGI(TAG, "[ACTION] Default response ricevuto");
+        break;
+    }
+    
+    default:
+        ESP_LOGI(TAG, "[ACTION] Callback ID: %d", callback_id);
+        break;
+    }
+    
+    return ESP_OK;
+}
+
+/**
+ * @brief Converte signal type in stringa per debug
+ */
+static const char* get_signal_name(esp_zb_app_signal_type_t sig_type)
+{
+    switch (sig_type) {
+    case ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP: return "SKIP_STARTUP";
+    case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START: return "DEVICE_FIRST_START";
+    case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT: return "DEVICE_REBOOT";
+    case ESP_ZB_BDB_SIGNAL_FORMATION: return "FORMATION";
+    case ESP_ZB_BDB_SIGNAL_STEERING: return "STEERING";
+    case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE: return "DEVICE_ANNCE";
+    case ESP_ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS: return "PERMIT_JOIN_STATUS";
+    case ESP_ZB_NWK_SIGNAL_DEVICE_ASSOCIATED: return "NWK_DEVICE_ASSOCIATED";
+    case ESP_ZB_ZDO_SIGNAL_LEAVE: return "DEVICE_LEAVE";
+    case ESP_ZB_COMMON_SIGNAL_CAN_SLEEP: return "CAN_SLEEP";
+    case ESP_ZB_ZDO_SIGNAL_PRODUCTION_CONFIG_READY: return "PRODUCTION_CONFIG_READY";
+    case ESP_ZB_NWK_SIGNAL_NO_ACTIVE_LINKS_LEFT: return "NO_ACTIVE_LINKS_LEFT";
+    default: return "UNKNOWN";
+    }
+}
+
+/**
  * @brief Handler principale dei segnali Zigbee
  */
 void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
@@ -132,10 +175,10 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
         if (err_status == ESP_OK) {
-            ESP_LOGI(TAG, "Device %s",
-                     sig_type == ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START ?
+            ESP_LOGI(TAG, "Device %s", 
+                     sig_type == ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START ? 
                      "primo avvio" : "riavviato");
-
+            
             if (esp_zb_bdb_is_factory_new()) {
                 ESP_LOGI(TAG, "Dispositivo nuovo, avvio formazione rete...");
                 esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_FORMATION);
@@ -163,9 +206,9 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                      extended_pan_id[3], extended_pan_id[2], extended_pan_id[1], extended_pan_id[0]);
             ESP_LOGI(TAG, "  Canale: %d", esp_zb_get_current_channel());
             ESP_LOGI(TAG, "  Short Address: 0x%04x", esp_zb_get_short_address());
-
+            
             s_network_formed = true;
-
+            
             open_network(NETWORK_OPEN_DURATION_SEC);
             xTimerStart(s_toggle_timer, 0);
             esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
@@ -179,51 +222,51 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_BDB_SIGNAL_STEERING:
         if (err_status == ESP_OK) {
             ESP_LOGI(TAG, "Steering completato");
-        } else {
-            ESP_LOGW(TAG, "Steering fallito: %s", esp_err_to_name(err_status));
         }
         break;
 
-    /**
-     * Segnale ZDO: Device Announce
-     * Arriva tipicamente al primo join e, a seconda dei device, anche ai rejoin.
-     * Qui lo usiamo solo per log.
-     */
     case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE: {
-        esp_zb_zdo_signal_device_annce_params_t *dev_annce_params =
+        esp_zb_zdo_signal_device_annce_params_t *dev_annce_params = 
             (esp_zb_zdo_signal_device_annce_params_t *)esp_zb_app_signal_get_params(p_sg_p);
-        ESP_LOGI(TAG, "*** DEVICE ANNOUNCE (join/rejoin) ***");
+        ESP_LOGI(TAG, "**********************************************");
+        ESP_LOGI(TAG, "*** DEVICE_ANNCE: NUOVO DISPOSITIVO ***");
         ESP_LOGI(TAG, "    Short Address: 0x%04x", dev_annce_params->device_short_addr);
         ESP_LOGI(TAG, "    IEEE Address: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
                  dev_annce_params->ieee_addr[7], dev_annce_params->ieee_addr[6],
                  dev_annce_params->ieee_addr[5], dev_annce_params->ieee_addr[4],
                  dev_annce_params->ieee_addr[3], dev_annce_params->ieee_addr[2],
                  dev_annce_params->ieee_addr[1], dev_annce_params->ieee_addr[0]);
+        ESP_LOGI(TAG, "**********************************************");
+        
+        // Invia ON con ritardo
+        esp_zb_scheduler_alarm((esp_zb_callback_t)send_on_to_device, 
+                               dev_annce_params->device_short_addr, 
+                               1500);
         break;
     }
 
-    /**
-     * Segnale NWK: dispositivo associato / rejoin
-     * Qui mandiamo lo switch_on sia al primo join che ai rejoin.
-     */
     case ESP_ZB_NWK_SIGNAL_DEVICE_ASSOCIATED: {
-        esp_zb_nwk_signal_device_associated_params_t *assoc_params =
-            (esp_zb_nwk_signal_device_associated_params_t *)esp_zb_app_signal_get_params(p_sg_p);
-
-        if (err_status == ESP_OK) {
-            ESP_LOGI(TAG, "*** DEVICE ASSOCIATED / REJOIN ***");
-            ESP_LOGI(TAG, "    Short Address: 0x%04x", assoc_params->short_addr);
+        // Questo segnale potrebbe essere quello giusto per i rejoin
+        esp_zb_zdo_signal_device_annce_params_t *dev_params = 
+            (esp_zb_zdo_signal_device_annce_params_t *)esp_zb_app_signal_get_params(p_sg_p);
+        
+        if (dev_params) {
+            ESP_LOGI(TAG, "##############################################");
+            ESP_LOGI(TAG, "### NWK_DEVICE_ASSOCIATED: REJOIN/ASSOCIAZIONE ###");
+            ESP_LOGI(TAG, "    Short Address: 0x%04x", dev_params->device_short_addr);
             ESP_LOGI(TAG, "    IEEE Address: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x",
-                     assoc_params->long_addr[7], assoc_params->long_addr[6],
-                     assoc_params->long_addr[5], assoc_params->long_addr[4],
-                     assoc_params->long_addr[3], assoc_params->long_addr[2],
-                     assoc_params->long_addr[1], assoc_params->long_addr[0]);
-
-            // Invia immediatamente ON al device che si è (ri)associato
-            // ATTENZIONE: qui assumiamo endpoint remoto = 1
-            send_on_to_device(assoc_params->short_addr, 1);
+                     dev_params->ieee_addr[7], dev_params->ieee_addr[6],
+                     dev_params->ieee_addr[5], dev_params->ieee_addr[4],
+                     dev_params->ieee_addr[3], dev_params->ieee_addr[2],
+                     dev_params->ieee_addr[1], dev_params->ieee_addr[0]);
+            ESP_LOGI(TAG, "##############################################");
+            
+            // Invia ON con ritardo
+            esp_zb_scheduler_alarm((esp_zb_callback_t)send_on_to_device, 
+                                   dev_params->device_short_addr, 
+                                   1500);
         } else {
-            ESP_LOGW(TAG, "DEVICE_ASSOCIATED con errore: %s", esp_err_to_name(err_status));
+            ESP_LOGI(TAG, "### NWK_DEVICE_ASSOCIATED (senza parametri) ###");
         }
         break;
     }
@@ -238,10 +281,26 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
         break;
     }
 
+    case ESP_ZB_ZDO_SIGNAL_LEAVE: {
+        ESP_LOGI(TAG, "@@@ DISPOSITIVO HA LASCIATO LA RETE @@@");
+        break;
+    }
+
+    case ESP_ZB_COMMON_SIGNAL_CAN_SLEEP:
+        // Ignora silenziosamente
+        break;
+
     default:
-        // Portato a LOGI per vedere facilmente nuovi segnali (debug rejoin)
-        ESP_LOGI(TAG, "Segnale Zigbee non gestito: 0x%x, status: %s",
-                 sig_type, esp_err_to_name(err_status));
+        // Log TUTTI gli altri segnali per debug
+        ESP_LOGW(TAG, ">>> SEGNALE NON GESTITO: %s (0x%x / %d), status: %s",
+                 get_signal_name(sig_type), sig_type, sig_type, 
+                 esp_err_to_name(err_status));
+        
+        // Prova a vedere se ci sono parametri
+        void *params = esp_zb_app_signal_get_params(p_sg_p);
+        if (params) {
+            ESP_LOGW(TAG, "    ^ Questo segnale ha parametri!");
+        }
         break;
     }
 }
@@ -304,6 +363,9 @@ static void esp_zb_task(void *pvParameters)
     };
     esp_zb_init(&zb_nwk_cfg);
 
+    /* Registra action handler per intercettare messaggi */
+    esp_zb_core_action_handler_register(zb_action_handler);
+
     esp_zb_ep_list_t *ep_list = create_coordinator_ep_list();
     esp_zb_device_register(ep_list);
 
@@ -313,7 +375,6 @@ static void esp_zb_task(void *pvParameters)
     ESP_LOGI(TAG, "Avvio stack Zigbee...");
     ESP_ERROR_CHECK(esp_zb_start(false));
 
-    /* Nuova API: usa esp_zb_stack_main_loop() invece di esp_zb_main_loop_iteration() */
     esp_zb_stack_main_loop();
 }
 
@@ -343,7 +404,6 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
 
-    /* Timer periodico per il toggle broadcast */
     s_toggle_timer = xTimerCreate(
         "toggle_timer",
         pdMS_TO_TICKS(TOGGLE_INTERVAL_SEC * 1000),
@@ -351,7 +411,7 @@ void app_main(void)
         NULL,
         toggle_timer_callback
     );
-
+    
     if (s_toggle_timer == NULL) {
         ESP_LOGE(TAG, "Errore creazione timer");
         return;
