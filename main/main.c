@@ -11,8 +11,8 @@
 static const char *TAG = "ZIGBEE_TOGGLE";
 
 /* Configurazione */
-#define TOGGLE_INTERVAL_SEC         60
-#define NETWORK_OPEN_DURATION_SEC   50
+#define TOGGLE_INTERVAL_SEC         45
+#define NETWORK_OPEN_DURATION_SEC   60
 #define COORDINATOR_ENDPOINT        1
 #define ESP_ZB_PRIMARY_CHANNEL_MASK (1l << 13)
 
@@ -21,6 +21,35 @@ static TimerHandle_t s_toggle_timer = NULL;
 
 /* Flag per sapere se la rete è formata */
 static bool s_network_formed = false;
+
+static void send_on_to_device(uint16_t short_addr, uint8_t endpoint)
+{
+    if (!s_network_formed) {
+        ESP_LOGW(TAG, "Rete non ancora formata, skip ON");
+        return;
+    }
+
+    ESP_LOGI(TAG, ">>> Invio ON a dispositivo 0x%04x (endpoint %d)", short_addr, endpoint);
+
+    esp_zb_zcl_on_off_cmd_t cmd_req = {
+        .zcl_basic_cmd = {
+            .src_endpoint = COORDINATOR_ENDPOINT,
+            .dst_addr_u = {
+                .addr_short = short_addr,
+            },
+            .dst_endpoint = endpoint,
+        },
+        .address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
+        .on_off_cmd_id = ESP_ZB_ZCL_CMD_ON_OFF_ON_ID,   // comando ON
+    };
+
+    esp_err_t ret = esp_zb_zcl_on_off_cmd_req(&cmd_req);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Comando ON inviato con successo");
+    } else {
+        ESP_LOGE(TAG, "Errore invio ON: %s", esp_err_to_name(ret));
+    }
+}
 
 /**
  * @brief Invia comando Toggle a tutti i dispositivi nella rete
@@ -157,6 +186,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                  dev_annce_params->ieee_addr[5], dev_annce_params->ieee_addr[4],
                  dev_annce_params->ieee_addr[3], dev_annce_params->ieee_addr[2],
                  dev_annce_params->ieee_addr[1], dev_annce_params->ieee_addr[0]);
+        send_on_to_device(dev_annce_params->device_short_addr);
         break;
     }
 
