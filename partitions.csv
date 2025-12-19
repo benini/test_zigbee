@@ -1,7 +1,8 @@
-# ESP-IDF Partition Table for Zigbee Coordinator + BLE (4MB Flash)
-# Name,      Type, SubType,  Offset,   Size,     Flags
-nvs,         data, nvs,      0x9000,   0x6000,
-phy_init,    data, phy,      0xF000,   0x1000,
-factory,     app,  factory,  0x10000,  0x180000,
-zb_storage,  data, 0x80,     0x190000, 0x10000,
-zb_fct,      data, 0x81,     0x1A0000, 0x1000,
+# Name,   Type, SubType, Offset,  Size, Flags
+# Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
+nvs,        data, nvs,      0x9000,  0x6000,
+phy_init,   data, phy,      0xf000,  0x1000,
+factory,    app,  factory,  0x10000, 900K,
+zb_storage, data, fat,      0xf1000, 16K,
+zb_fct,     data, fat,      0xf5000, 1K,
+
